@@ -28,6 +28,7 @@
   font-src https://fonts.gstatic.com;
   img-src 'self' data:;
   connect-src 'self' https://rpc.pulsechain.com https://rpc.v4.testnet.pulsechain.com https://cdn.jsdelivr.net;
+  frame-src https://dexscreener.com;
   object-src 'none';
   base-uri 'self';
   form-action 'self';
@@ -922,6 +923,15 @@
 
     <!-- ===================== TOKENOMICS ===================== -->
     <section class="panel active" id="panel-tokenomics">
+      <div class="card" style="padding:0; overflow:hidden;">
+        <iframe
+          src="https://dexscreener.com/pulsechain/0x2F520454797C008420034489cc9d09bFec2243b4?embed=1&theme=dark&trades=0&info=0"
+          title="TFR/OTR live chart on DexScreener"
+          style="width:100%; height:520px; border:0; display:block;"
+          loading="lazy"
+        ></iframe>
+      </div>
+
       <div class="card">
         <h2>Protocol snapshot</h2>
         <p class="sub">Fixed supply figures, always the same regardless of price.</p>
@@ -929,28 +939,28 @@
           <div class="stat">
             <div class="label">Total supply</div>
             <div class="value small">10,000,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-totalsupply">&approx; $--.-- USD</div>
           </div>
           <div class="stat">
             <div class="label">Burned</div>
             <div class="value small">8,500,000,000 <span class="unit">85%</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-burned">&approx; $--.-- USD</div>
           </div>
           <div class="stat">
             <div class="label">Current Circulation</div>
             <div class="value small">850,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-circulating">&approx; $--.-- USD</div>
           </div>
           <div class="stat">
             <div class="label">Treasury</div>
             <div class="value small">500,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-treasury">&approx; $--.-- USD</div>
             <div class="stat-note">Used for future liquidity, rewards, and other TBD functions.</div>
           </div>
           <div class="stat">
             <div class="label">2027 staking reserves</div>
             <div class="value small">150,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-reserve">&approx; $--.-- USD</div>
           </div>
         </div>
       </div>
@@ -981,17 +991,17 @@
           <div class="stat">
             <div class="label">Stake OTR &rarr; earn TFR</div>
             <div class="value small">36,500,000 <span class="unit">/ 365 days</span></div>
-            <div class="usd-approx">&approx; $--.-- / day USD</div>
+            <div class="usd-approx" id="tok-usd-otrpool-daily">&approx; $--.-- / day USD</div>
           </div>
           <div class="stat">
             <div class="label">Stake TFR &rarr; earn TFR</div>
             <div class="value small">36,500,000 <span class="unit">/ 365 days</span></div>
-            <div class="usd-approx">&approx; $--.-- / day USD</div>
+            <div class="usd-approx" id="tok-usd-tfrpool-daily">&approx; $--.-- / day USD</div>
           </div>
           <div class="stat">
             <div class="label">2027+ Staking Reserve</div>
             <div class="value small">77,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="tok-usd-futurereserve">&approx; $--.-- USD</div>
           </div>
         </div>
       </div>
@@ -1012,17 +1022,17 @@
           <div class="stat">
             <div class="label">PLS balance</div>
             <div class="value" id="ov-pls">--</div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="ov-pls-usd">&approx; $--.-- USD</div>
           </div>
           <div class="stat">
             <div class="label">OTR balance</div>
             <div class="value" id="ov-otr">--</div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="ov-otr-usd">&approx; $--.-- USD</div>
           </div>
           <div class="stat">
             <div class="label">TFR balance</div>
             <div class="value" id="ov-tfr">--</div>
-            <div class="usd-approx">&approx; $--.-- USD</div>
+            <div class="usd-approx" id="ov-tfr-usd">&approx; $--.-- USD</div>
           </div>
         </div>
       </div>
@@ -1276,6 +1286,9 @@ const CONFIG = {
       ROUTER: "0x98bf93ebf5c380C0e6Ae8e192A7e2AE08edAcc02",
       FACTORY: "0x1715a3E4A142d8b698131108995174F37aEBA10D",
       OTR: "0xf28956Aad0EEC5cD30492d29F6E98e2011C25203",
+      // eDAI: used only as a live USD reference for price display (via the real
+      // WPLS/eDAI PulseX pool), not part of TFR's own token/pool set.
+      EDAI: "0xefD766cCb38EaF1dfd701853BFCe31359239F305",
       // Live on mainnet as of 2026-09-02.
       TFR: "0x4f71a83Ca2d16e33C44Ce0734f4C17AB8301Cbc6",
       OTR_STAKING: "0x754026a34dA8a6a8134ee0f9612A63A02Fdf479D",
@@ -1294,6 +1307,7 @@ const CONFIG = {
       ROUTER: "0xDaE9dd3d1A52CfCe9d5F2fAC7fDe164D500E50f7",
       FACTORY: "0xFf0538782D122d3112F75dc7121F61562261c0f7",
       OTR: "",              // testnet OTR stand-in (OTRt) address: fill in per deployment
+      EDAI: "",             // no eDAI-equivalent test token exists on testnet
       TFR: "",             // current testnet TFR deploy is the stale taxed version; redeploy before using this UI against it
       OTR_STAKING: "",
       TFR_STAKING: ""
@@ -1435,6 +1449,39 @@ function fmt(n, maxDecimals) {
 function short(a) { return a ? a.slice(0, 6) + "…" + a.slice(-4) : ""; }
 function explorerTx(hash) { return net().explorer + "/tx/" + hash; }
 function explorerAddr(a) { return net().explorer + "/address/" + a; }
+
+// USD is never a live feed here, always derived on the spot from real pool reserves via
+// the router - eDAI is the stable reference (~$1), reached by routing each token through
+// WPLS/OTR the same way a real swap would. No external price API, consistent with this
+// project's "verified on-chain data only" rule throughout. Returns null (not 0) whenever
+// a route can't be priced yet, so callers can distinguish "genuinely worth nothing" from
+// "no live route" and fall back to the inert "--.--" placeholder instead of a wrong "$0".
+async function tokenUsdPrice(tokenKey, provider) {
+  if (tokenKey === "EDAI") return 1;
+  if (!addr("ROUTER") || !addr("EDAI") || !addr(tokenKey)) return null;
+  let path;
+  if (tokenKey === "WPLS") path = [addr("WPLS"), addr("EDAI")];
+  else if (tokenKey === "OTR") path = [addr("OTR"), addr("WPLS"), addr("EDAI")];
+  else if (tokenKey === "TFR") path = [addr("TFR"), addr("OTR"), addr("WPLS"), addr("EDAI")];
+  else return null;
+  try {
+    const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, provider);
+    const quoted = await router.getAmountsOut(ethers.parseEther("1"), path);
+    return Number(ethers.formatEther(quoted[quoted.length - 1]));
+  } catch (err) {
+    return null; // no live route yet (e.g. thin/nonexistent pool) - not a $0 price
+  }
+}
+
+// Small values (a single TFR is worth a few millionths of a dollar) need more than 2
+// decimals or they'd all render as "$0.00" - scale precision to magnitude instead of a
+// fixed decimal count.
+function fmtUsd(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "$--.--";
+  const abs = Math.abs(n);
+  const decimals = abs === 0 ? 2 : abs >= 1 ? 2 : abs >= 0.01 ? 4 : 8;
+  return "$" + Number(n).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
 
 /* =========================================================================
    Network select + wallet connect
@@ -1710,22 +1757,36 @@ async function refreshOverview() {
   try {
     const provider = state.provider;
     const pls = await provider.getBalance(state.address);
-    document.getElementById("ov-pls").innerHTML = fmt(ethers.formatEther(pls), 2) + " " + net().nativeSymbol;
+    const plsNum = Number(ethers.formatEther(pls));
+    document.getElementById("ov-pls").innerHTML = fmt(plsNum, 2) + " " + net().nativeSymbol;
+    tokenUsdPrice("WPLS", provider).then((p) => {
+      document.getElementById("ov-pls-usd").textContent = "≈ " + fmtUsd(p === null ? null : p * plsNum) + " USD";
+    });
 
     if (addr("OTR")) {
       const otr = new ethers.Contract(addr("OTR"), ERC20_ABI, provider);
       const bal = await otr.balanceOf(state.address);
-      document.getElementById("ov-otr").innerHTML = fmt(ethers.formatEther(bal), 2) + " OTR";
+      const balNum = Number(ethers.formatEther(bal));
+      document.getElementById("ov-otr").innerHTML = fmt(balNum, 2) + " OTR";
+      tokenUsdPrice("OTR", provider).then((p) => {
+        document.getElementById("ov-otr-usd").textContent = "≈ " + fmtUsd(p === null ? null : p * balNum) + " USD";
+      });
     } else {
       document.getElementById("ov-otr").innerHTML = "not configured";
+      document.getElementById("ov-otr-usd").textContent = "≈ $--.-- USD";
     }
 
     if (addr("TFR")) {
       const tfr = new ethers.Contract(addr("TFR"), ERC20_ABI, provider);
       const bal = await tfr.balanceOf(state.address);
-      document.getElementById("ov-tfr").innerHTML = fmt(ethers.formatEther(bal), 2) + " TFR";
+      const balNum = Number(ethers.formatEther(bal));
+      document.getElementById("ov-tfr").innerHTML = fmt(balNum, 2) + " TFR";
+      tokenUsdPrice("TFR", provider).then((p) => {
+        document.getElementById("ov-tfr-usd").textContent = "≈ " + fmtUsd(p === null ? null : p * balNum) + " USD";
+      });
     } else {
       document.getElementById("ov-tfr").innerHTML = "not deployed yet";
+      document.getElementById("ov-tfr-usd").textContent = "≈ $--.-- USD";
     }
   } catch (err) {
     console.error(err);
@@ -1817,12 +1878,14 @@ async function quoteSwap() {
   const outEl = document.getElementById("swap-amount-out");
   const rateEl = document.getElementById("swap-rate");
   const impactEl = document.getElementById("swap-impact");
+  const usdOutEl = document.getElementById("swap-usd-out");
   const raw = document.getElementById("swap-amount-in").value.trim();
 
   if (!raw || Number(raw) <= 0 || !addr("ROUTER") || !addr("OTR") || !addr("TFR")) {
     outEl.value = "";
     rateEl.textContent = "--";
     impactEl.textContent = "--";
+    usdOutEl.textContent = "≈ $--.-- USD";
     return;
   }
 
@@ -1838,10 +1901,15 @@ async function quoteSwap() {
     const rate = Number(ethers.formatEther(amountOut)) / Number(raw);
     rateEl.textContent = "1 " + state.payToken + " ≈ " + fmt(rate, 6) + " " + state.receiveToken;
     impactEl.textContent = "depends on pool depth at execution";
+
+    const receiveTokenKey = state.receiveToken === "WPLS" || state.receiveToken === "PLS" ? "WPLS" : state.receiveToken;
+    const outUsd = await tokenUsdPrice(receiveTokenKey, provider);
+    usdOutEl.textContent = "≈ " + fmtUsd(outUsd === null ? null : outUsd * Number(ethers.formatEther(amountOut))) + " USD";
   } catch (err) {
     outEl.value = "";
     rateEl.textContent = "no route / not enough liquidity";
     impactEl.textContent = "--";
+    usdOutEl.textContent = "≈ $--.-- USD";
     console.error(err);
   }
 }
@@ -2016,8 +2084,8 @@ function renderStakePanel(poolKey) {
     '<div class="stake-grid">' +
       '<div>' +
         '<div class="grid-stats">' +
-          '<div class="stat"><div class="label">Total staked</div><div class="value small" id="' + poolKey + '-total">--</div><div class="usd-approx">&approx; $--.-- USD</div></div>' +
-          '<div class="stat"><div class="label">Daily emission</div><div class="value small" id="' + poolKey + '-rate">--</div><div class="usd-approx">&approx; $--.-- / day USD</div></div>' +
+          '<div class="stat"><div class="label">Total staked</div><div class="value small" id="' + poolKey + '-total">--</div><div class="usd-approx" id="' + poolKey + '-total-usd">&approx; $--.-- USD</div></div>' +
+          '<div class="stat"><div class="label">Daily emission</div><div class="value small" id="' + poolKey + '-rate">--</div><div class="usd-approx" id="' + poolKey + '-rate-usd">&approx; $--.-- / day USD</div></div>' +
           '<div class="stat"><div class="label">Current APR</div><div class="value small" id="' + poolKey + '-apr">--</div><div class="usd-approx" id="' + poolKey + '-apr-note">based on staked amount vs. emission rate</div></div>' +
         '</div>' +
         '<div style="margin-top:14px">' +
@@ -2027,8 +2095,8 @@ function renderStakePanel(poolKey) {
       '</div>' +
       '<div>' +
         '<div class="grid-stats">' +
-          '<div class="stat"><div class="label">Your stake</div><div class="value small" id="' + poolKey + '-mystake">--</div><div class="usd-approx">&approx; $--.-- USD</div></div>' +
-          '<div class="stat"><div class="label">Earned (claimable)</div><div class="value small" id="' + poolKey + '-earned">--</div><div class="usd-approx">&approx; $--.-- USD</div></div>' +
+          '<div class="stat"><div class="label">Your stake</div><div class="value small" id="' + poolKey + '-mystake">--</div><div class="usd-approx" id="' + poolKey + '-mystake-usd">&approx; $--.-- USD</div></div>' +
+          '<div class="stat"><div class="label">Earned (claimable)</div><div class="value small" id="' + poolKey + '-earned">--</div><div class="usd-approx" id="' + poolKey + '-earned-usd">&approx; $--.-- USD</div></div>' +
           '<div class="stat"><div class="label">Fee-share (claimable)</div><div class="value small" id="' + poolKey + '-feeshare">--</div><div class="usd-approx">from other stakers&#39; 2% withdraw fees</div></div>' +
         '</div>' +
       '</div>' +
@@ -2141,6 +2209,17 @@ async function refreshStakePool(poolKey) {
     document.getElementById(poolKey + "-total").textContent = fmt(ethers.formatEther(total), 0) + " " + pool.stakeTokenKey;
     document.getElementById(poolKey + "-rate").textContent = fmt(ethers.formatEther(rate * 86400n), 0) + " " + pool.rewardTokenKey + "/day";
 
+    const [stakeTokenUsd, rewardTokenUsd] = await Promise.all([
+      tokenUsdPrice(pool.stakeTokenKey, provider),
+      tokenUsdPrice(pool.rewardTokenKey, provider),
+    ]);
+    const totalNum = Number(ethers.formatEther(total));
+    const dailyNum = Number(ethers.formatEther(rate * 86400n));
+    document.getElementById(poolKey + "-total-usd").textContent =
+      "≈ " + fmtUsd(stakeTokenUsd === null ? null : stakeTokenUsd * totalNum) + " USD";
+    document.getElementById(poolKey + "-rate-usd").textContent =
+      "≈ " + fmtUsd(rewardTokenUsd === null ? null : rewardTokenUsd * dailyNum) + " / day USD";
+
     const aprEl = document.getElementById(poolKey + "-apr");
     const aprNoteEl = document.getElementById(poolKey + "-apr-note");
     try {
@@ -2183,10 +2262,16 @@ async function refreshStakePool(poolKey) {
       document.getElementById(poolKey + "-mystake").textContent = fmt(ethers.formatEther(mine), 4) + " " + pool.stakeTokenKey;
       document.getElementById(poolKey + "-earned").textContent = fmt(ethers.formatEther(earned), 4) + " " + pool.rewardTokenKey;
       document.getElementById(poolKey + "-feeshare").textContent = fmt(ethers.formatEther(feeShare), 4) + " " + pool.stakeTokenKey;
+      document.getElementById(poolKey + "-mystake-usd").textContent =
+        "≈ " + fmtUsd(stakeTokenUsd === null ? null : stakeTokenUsd * Number(ethers.formatEther(mine))) + " USD";
+      document.getElementById(poolKey + "-earned-usd").textContent =
+        "≈ " + fmtUsd(rewardTokenUsd === null ? null : rewardTokenUsd * Number(ethers.formatEther(earned))) + " USD";
     } else {
       document.getElementById(poolKey + "-mystake").textContent = "--";
       document.getElementById(poolKey + "-earned").textContent = "--";
       document.getElementById(poolKey + "-feeshare").textContent = "--";
+      document.getElementById(poolKey + "-mystake-usd").textContent = "≈ $--.-- USD";
+      document.getElementById(poolKey + "-earned-usd").textContent = "≈ $--.-- USD";
     }
   } catch (err) {
     console.error(err);
@@ -2637,6 +2722,24 @@ function initBgFxToggle(fieldController) {
 /* =========================================================================
    Global refresh + boot
    ========================================================================= */
+async function refreshTokenomicsUsd() {
+  const provider = state.provider || new ethers.JsonRpcProvider(net().rpcUrls[0]);
+  const tfrUsd = await tokenUsdPrice("TFR", provider);
+  const set = (id, tfrAmount) => {
+    document.getElementById(id).textContent = "≈ " + fmtUsd(tfrUsd === null ? null : tfrUsd * tfrAmount) + " USD";
+  };
+  set("tok-usd-totalsupply", 10_000_000_000);
+  set("tok-usd-burned", 8_500_000_000);
+  set("tok-usd-circulating", 850_000_000);
+  set("tok-usd-treasury", 500_000_000);
+  set("tok-usd-reserve", 150_000_000);
+  set("tok-usd-futurereserve", 77_000_000);
+  document.getElementById("tok-usd-otrpool-daily").textContent =
+    "≈ " + fmtUsd(tfrUsd === null ? null : tfrUsd * 100_000) + " / day USD";
+  document.getElementById("tok-usd-tfrpool-daily").textContent =
+    "≈ " + fmtUsd(tfrUsd === null ? null : tfrUsd * 100_000) + " / day USD";
+}
+
 function refreshAll() {
   updateWalletChip();
   refreshOverview();
@@ -2645,6 +2748,7 @@ function refreshAll() {
   renderStakePanel("OTR_STAKING");
   renderStakePanel("TFR_STAKING");
   renderTokenomicsAddresses();
+  refreshTokenomicsUsd();
 }
 
 function boot() {
