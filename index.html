@@ -941,7 +941,6 @@
           <div class="stat">
             <div class="label">Market cap</div>
             <div class="value small" id="tok-tfr-mcap">--</div>
-            <div class="stat-note">Price &times; full 10,000,000,000 supply, including the permanently burned 85%.</div>
           </div>
         </div>
       </div>
@@ -970,11 +969,6 @@
             <div class="value small">500,000,000 <span class="unit">TFR</span></div>
             <div class="usd-approx" id="tok-usd-treasury">&approx; $--.-- USD</div>
             <div class="stat-note">Used for future liquidity, rewards, and other TBD functions.</div>
-          </div>
-          <div class="stat">
-            <div class="label">2027 staking reserves</div>
-            <div class="value small">150,000,000 <span class="unit">TFR</span></div>
-            <div class="usd-approx" id="tok-usd-reserve">&approx; $--.-- USD</div>
           </div>
         </div>
       </div>
@@ -2750,7 +2744,6 @@ async function refreshTokenomicsUsd() {
   set("tok-usd-burned", 8_500_000_000);
   set("tok-usd-circulating", 850_000_000);
   set("tok-usd-treasury", 500_000_000);
-  set("tok-usd-reserve", 150_000_000);
   set("tok-usd-futurereserve", 77_000_000);
   document.getElementById("tok-usd-otrpool-daily").textContent =
     "≈ " + fmtUsd(tfrUsd === null ? null : tfrUsd * 100_000) + " / day USD";
