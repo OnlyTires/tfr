@@ -933,6 +933,20 @@
       </div>
 
       <div class="card">
+        <div class="grid-stats">
+          <div class="stat">
+            <div class="label">TFR price</div>
+            <div class="value small" id="tok-tfr-price">--</div>
+          </div>
+          <div class="stat">
+            <div class="label">Market cap</div>
+            <div class="value small" id="tok-tfr-mcap">--</div>
+            <div class="stat-note">Price &times; full 10,000,000,000 supply, including the permanently burned 85%.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Protocol snapshot</h2>
         <p class="sub">Fixed supply figures, always the same regardless of price.</p>
         <div class="grid-stats">
@@ -2725,6 +2739,10 @@ function initBgFxToggle(fieldController) {
 async function refreshTokenomicsUsd() {
   const provider = state.provider || new ethers.JsonRpcProvider(net().rpcUrls[0]);
   const tfrUsd = await tokenUsdPrice("TFR", provider);
+
+  document.getElementById("tok-tfr-price").textContent = tfrUsd === null ? "--" : fmtUsd(tfrUsd);
+  document.getElementById("tok-tfr-mcap").textContent = tfrUsd === null ? "--" : fmtUsd(tfrUsd * 10_000_000_000);
+
   const set = (id, tfrAmount) => {
     document.getElementById(id).textContent = "≈ " + fmtUsd(tfrUsd === null ? null : tfrUsd * tfrAmount) + " USD";
   };
