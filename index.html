@@ -1234,6 +1234,16 @@
             <button data-slip="3" onclick="setSlippage(3, this)">3%</button>
           </div>
 
+          <!-- Buying TFR with PLS/WPLS in a single 3-hop router call was unreliable, so for
+               exactly that combination this one button runs two sequential transactions
+               (PLS/WPLS -> OTR, then OTR -> TFR) instead. The wallet prompts twice, one
+               after another, from a single click. Every other pay/receive combination is
+               untouched and still runs as one transaction. -->
+          <div id="twohop-note" style="display:none; font-size:12.5px; color:var(--text-muted); line-height:1.5; margin-top:6px;">
+            Buying TFR with PLS or WPLS runs as two transactions here instead of one combined
+            route: first PLS/WPLS &rarr; OTR, then OTR &rarr; TFR. Your wallet will prompt
+            twice, one after the other, from the one button below.
+          </div>
           <button class="btn full" id="swap-action-btn" onclick="onSwapAction()" style="margin-top:6px">
             Connect Wallet
           </button>
@@ -1461,7 +1471,7 @@ function explorerTx(hash) { return net().explorer + "/tx/" + hash; }
 function explorerAddr(a) { return net().explorer + "/address/" + a; }
 
 // USD is never a live feed here, always derived on the spot from real pool reserves via
-// the router - eDAI is the stable reference (~$1), reached by routing each token through
+// the router. eDAI is the stable reference (~$1), reached by routing each token through
 // WPLS/OTR the same way a real swap would. No external price API, consistent with this
 // project's "verified on-chain data only" rule throughout. Returns null (not 0) whenever
 // a route can't be priced yet, so callers can distinguish "genuinely worth nothing" from
@@ -1479,12 +1489,12 @@ async function tokenUsdPrice(tokenKey, provider) {
     const quoted = await router.getAmountsOut(ethers.parseEther("1"), path);
     return Number(ethers.formatEther(quoted[quoted.length - 1]));
   } catch (err) {
-    return null; // no live route yet (e.g. thin/nonexistent pool) - not a $0 price
+    return null; // no live route yet (e.g. thin/nonexistent pool), not a $0 price
   }
 }
 
 // Small values (a single TFR is worth a few millionths of a dollar) need more than 2
-// decimals or they'd all render as "$0.00" - scale precision to magnitude instead of a
+// decimals or they'd all render as "$0.00", so scale precision to magnitude instead of a
 // fixed decimal count.
 function fmtUsd(n) {
   if (n === null || n === undefined || Number.isNaN(n)) return "$--.--";
@@ -1823,6 +1833,12 @@ function buildSwapPath(payKey, receiveKey) {
 
 function isNativePay() { return state.payToken === "PLS"; }
 
+// True exactly for the combination the single 3-hop router call was unreliable for -
+// paying with native/wrapped PLS to receive TFR. See onTwoHopSwap().
+function isTwoHopEligible() {
+  return (state.payToken === "PLS" || state.payToken === "WPLS") && state.receiveToken === "TFR";
+}
+
 async function tokenBalance(key, account) {
   if (key === "PLS") return await state.provider.getBalance(account);
   const c = new ethers.Contract(addr(key), ERC20_ABI, state.provider);
@@ -1926,6 +1942,8 @@ async function quoteSwap() {
 
 async function refreshSwap() {
   const btn = document.getElementById("swap-action-btn");
+  const twoHop = isTwoHopEligible();
+  document.getElementById("twohop-note").style.display = twoHop ? "block" : "none";
 
   if (!addr("ROUTER") || !addr("OTR") || !addr("TFR")) {
     btn.textContent = "Swap not available on this network yet";
@@ -1934,7 +1952,9 @@ async function refreshSwap() {
     btn.textContent = "Connect Wallet";
     btn.disabled = false;
   } else {
-    btn.textContent = "Swap " + state.payToken + " for " + state.receiveToken;
+    btn.textContent = twoHop
+      ? "Swap " + state.payToken + " for " + state.receiveToken + " (2 transactions)"
+      : "Swap " + state.payToken + " for " + state.receiveToken;
     btn.disabled = false;
   }
 
@@ -1964,6 +1984,8 @@ async function onSwapAction() {
     toast("Enter an amount", "Type how much you want to swap first.", "error");
     return;
   }
+
+  if (isTwoHopEligible()) return onTwoHopSwap(raw);
 
   const btn = document.getElementById("swap-action-btn");
   const payKey = state.payToken;
@@ -2015,6 +2037,91 @@ async function onSwapAction() {
   }
 }
 
+// One button, two sequential transactions instead of one 3-hop router call. The wallet
+// prompts twice, back to back, driven automatically by this single function, with no
+// separate "step 2" button to click. The amount swapped in the second transaction is the
+// REAL OTR received from the first (a measured balance delta, not the pre-swap quote), so
+// slippage/fee-on-transfer in step 1 can't leave step 2 swapping a stale estimate.
+async function onTwoHopSwap(raw) {
+  const btn = document.getElementById("swap-action-btn");
+  const payKey = state.payToken;
+  const native = payKey === "PLS";
+
+  state.actionInFlight = true;
+  try {
+    const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, state.signer);
+    const otr = new ethers.Contract(addr("OTR"), ERC20_ABI, state.signer);
+    const amountIn = ethers.parseEther(raw);
+    const path1 = [routeAddr(payKey), addr("OTR")];
+    const path2 = [addr("OTR"), addr("TFR")];
+
+    // ---- Approvals FIRST, both of them, before either swap transaction is sent ----
+    // A quick quote for step 1 gives an estimate of how much OTR is about to show up,
+    // used only to decide whether OTR already has enough allowance approved. The actual
+    // approval, once triggered, is for MAX (see ensureAllowance), so a later real amount
+    // slightly different from this estimate (slippage, fee-on-transfer) is still covered.
+    setBusy(btn, true, "Preparing approvals…");
+    const estimatedOtrOut = (await router.getAmountsOut(amountIn, path1))[path1.length - 1];
+
+    if (!native) {
+      setBusy(btn, true, "Checking " + payKey + " allowance…");
+      const tokenIn = new ethers.Contract(addr(payKey), ERC20_ABI, state.signer);
+      await ensureAllowance(tokenIn, addr("ROUTER"), amountIn, payKey, btn);
+    }
+    setBusy(btn, true, "Checking OTR allowance…");
+    await ensureAllowance(otr, addr("ROUTER"), estimatedOtrOut, "OTR", btn);
+
+    // ---- Transaction 1: pay token -> OTR ----
+    setBusy(btn, true, "Quoting (1/2)…");
+    const amounts1 = await router.getAmountsOut(amountIn, path1);
+    const minOut1 = (amounts1[amounts1.length - 1] * BigInt(Math.round((100 - state.slippagePct) * 100))) / 10000n;
+    const deadline1 = Math.floor(Date.now() / 1000) + 60 * 10;
+
+    const otrBefore = await otr.balanceOf(state.address);
+
+    setBusy(btn, true, "Confirm 1/2 in wallet: swap to OTR…");
+    const tx1 = native
+      ? await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minOut1, path1, state.address, deadline1, { value: amountIn })
+      : await router.swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, minOut1, path1, state.address, deadline1);
+    toast("Transaction 1 of 2 submitted", "Swapping " + payKey + " for OTR…", null, explorerTx(tx1.hash));
+    setBusy(btn, true, "Confirming 1/2…");
+    await tx1.wait();
+
+    const otrAfter = await otr.balanceOf(state.address);
+    const received = otrAfter - otrBefore;
+    if (received <= 0n) throw new Error("First swap completed but no OTR balance increase was detected.");
+    toast("Transaction 1 of 2 complete", "Received " + fmt(ethers.formatEther(received), 4) + " OTR. Continuing to OTR -> TFR…", "success", explorerTx(tx1.hash));
+
+    // ---- Transaction 2: OTR -> TFR. No allowance check here, already approved above,
+    // before transaction 1 ever ran. If the real amount received ended up higher than the
+    // estimate this was pre-approved for, that's still fine: the approval is MAX, not the
+    // estimate itself. ----
+    setBusy(btn, true, "Quoting (2/2)…");
+    const amounts2 = await router.getAmountsOut(received, path2);
+    const minOut2 = (amounts2[amounts2.length - 1] * BigInt(Math.round((100 - state.slippagePct) * 100))) / 10000n;
+    const deadline2 = Math.floor(Date.now() / 1000) + 60 * 10;
+
+    setBusy(btn, true, "Confirm 2/2 in wallet: OTR for TFR…");
+    const tx2 = await router.swapExactTokensForTokensSupportingFeeOnTransferTokens(received, minOut2, path2, state.address, deadline2);
+    toast("Transaction 2 of 2 submitted", "Swapping OTR for TFR…", null, explorerTx(tx2.hash));
+    setBusy(btn, true, "Confirming 2/2…");
+    await tx2.wait();
+    toast("Swap complete", "Received TFR.", "success", explorerTx(tx2.hash));
+
+    document.getElementById("swap-amount-in").value = "";
+    document.getElementById("swap-amount-out").value = "";
+    refreshSwap();
+    refreshOverview();
+  } catch (err) {
+    console.error(err);
+    toast("Swap failed", (err.reason || err.message || String(err)).slice(0, 140), "error");
+  } finally {
+    setBusy(btn, false);
+    state.actionInFlight = false;
+    refreshSwap();
+  }
+}
+
 /// Approves `spender` for `amount` on `tokenContract`, handling the classic ERC20
 /// approve race condition defensively: going straight from a nonzero allowance to a
 /// different nonzero allowance is the exact pattern that pattern is vulnerable to (a
@@ -2023,6 +2130,13 @@ async function onSwapAction() {
 /// contracts used here (neither is malicious), but zeroing first before setting a new
 /// nonzero value costs one extra confirmation and closes the class off entirely rather
 /// than relying on trusting today's specific spender forever (2026-08-25 audit).
+// Approves MAX (not the exact amount needed) once an approval is actually triggered, so
+// this same "is the current allowance already enough" check, on every future call for
+// this token/spender pair, from any action, swap or staking alike, passes immediately
+// without asking for another signature. `amount` still controls whether an approval is
+// needed at all (a real allowance below what's needed still triggers one), it just no
+// longer controls what gets approved once it does. Applies everywhere this shared helper
+// is called, not just the swap flow.
 async function ensureAllowance(tokenContract, spender, amount, tokenLabel, btn) {
   const current = await tokenContract.allowance(state.address, spender);
   if (current >= amount) return;
@@ -2033,11 +2147,11 @@ async function ensureAllowance(tokenContract, spender, amount, tokenLabel, btn) 
     await resetTx.wait();
   }
 
-  setBusy(btn, true, "Approve " + tokenLabel + "…");
-  const approveTx = await tokenContract.approve(spender, amount);
+  setBusy(btn, true, "Approve " + tokenLabel + " (max, one time)…");
+  const approveTx = await tokenContract.approve(spender, ethers.MaxUint256);
   toast("Approval submitted", "Waiting for confirmation…", null, explorerTx(approveTx.hash));
   await approveTx.wait();
-  toast("Approved", tokenLabel + " spending approved.", "success");
+  toast("Approved", tokenLabel + " approved for future swaps, no need to approve again.", "success");
 }
 
 function setBusy(btn, busy, label) {
