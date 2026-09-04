@@ -606,6 +606,31 @@
   }
   .swap-field .usd-approx { margin-top: 4px; }
 
+  .custom-token-status {
+    font-size: 11.5px;
+    color: var(--text-faint);
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+  .custom-token-status.ok { color: var(--good); }
+  .custom-token-status.error { color: var(--bad); }
+
+  #swap-impact.warn { color: var(--warn); font-weight: 600; }
+  #swap-impact.bad { color: var(--bad); font-weight: 700; }
+  #custom-token-address {
+    width: 100%;
+    background: var(--bg-elevated);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 12.5px;
+    outline: none;
+  }
+  #custom-token-address:focus { border-color: var(--accent-dim); }
+
   /* supply bar */
   .supply-bar {
     display: flex;
@@ -848,14 +873,24 @@
     nav.tabs {
       position: static;
       flex-direction: row;
-      justify-content: center;
+      justify-content: flex-start;
       overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scroll-snap-type: x proximity;
       width: 100%;
       flex: none;
-      gap: 6px;
-      padding-bottom: 4px;
+      gap: 4px;
+      padding: 0 4px 4px;
+      margin: 0 -4px;
+      mask-image: linear-gradient(to right, transparent, black 14px, black calc(100% - 14px), transparent);
+      -webkit-mask-image: linear-gradient(to right, transparent, black 14px, black calc(100% - 14px), transparent);
     }
-    nav.tabs button, nav.tabs a.nav-link { flex: 0 0 auto; }
+    nav.tabs button, nav.tabs a.nav-link {
+      flex: 0 0 auto;
+      scroll-snap-align: start;
+      padding: 9px 11px;
+      font-size: 13.5px;
+    }
     nav.tabs .nav-divider { display: none; }
 
     .topbar {
@@ -1201,9 +1236,14 @@
                 <option value="PLS">PLS</option>
                 <option value="WPLS">WPLS</option>
                 <option value="OTR" selected>OTR</option>
+                <option value="CUSTOM">Custom token…</option>
               </select>
             </div>
             <div style="margin-top:6px"><span class="max-link" onclick="setSwapMax()">MAX</span></div>
+            <div id="custom-token-row" style="display:none; margin-top:10px;">
+              <input type="text" placeholder="0x… token contract address" id="custom-token-address" oninput="onCustomTokenAddressInput()" />
+              <div id="custom-token-status" class="custom-token-status"></div>
+            </div>
           </div>
 
           <div class="swap-field">
@@ -1381,9 +1421,18 @@ const state = {
   signer: null,
   address: null,
   chainId: null,
-  payToken: "OTR",    // PLS | WPLS | OTR
+  payToken: "OTR",    // PLS | WPLS | OTR | CUSTOM
   receiveToken: "TFR", // TFR | OTR
   slippagePct: 0.5,
+  // Set only once a pasted custom-token address has passed every validation step (format,
+  // real contract, looks like an ERC20, AND has a real PulseX route to OTR). Any function
+  // touching a custom token must check customTokenValid before trusting the rest of this,
+  // not just customTokenAddress being non-null.
+  customTokenValid: false,
+  customTokenAddress: null,
+  customTokenSymbol: null,
+  customTokenDecimals: null,
+  customTokenPath: null, // resolved route to OTR: [token, OTR] or [token, WPLS, OTR]
   // Global mutex across every on-chain action (swap/stake/withdraw/claim/exit). Guards
   // against double-submission if the DOM gets rebuilt mid-transaction (e.g. the user
   // switches networks while a tx is pending, which re-renders the stake panels with
@@ -1761,7 +1810,11 @@ function setupTabs() {
   });
 }
 function activateTab(tabKey) {
-  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tabKey));
+  document.querySelectorAll("nav.tabs button").forEach((b) => {
+    const isActive = b.dataset.tab === tabKey;
+    b.classList.toggle("active", isActive);
+    if (isActive) b.scrollIntoView({ behavior: "smooth", inline: "nearest", block: "nearest" });
+  });
   document.querySelectorAll("main.view .panel").forEach((p) => p.classList.toggle("active", p.id === "panel-" + tabKey));
 }
 
@@ -1823,9 +1876,34 @@ async function refreshOverview() {
    onPayTokenChange()).
    ========================================================================= */
 let swapDebounce = null;
+let customTokenDebounce = null;
+
+// Every existing token in this app (PLS, WPLS, OTR, TFR) is 18 decimals, so the rest of
+// this file safely hardcodes ethers.parseEther/formatEther for amounts. A pasted custom
+// token is NOT guaranteed to be 18 decimals (HEX is 8, bridged USDC is 6, real examples on
+// PulseChain), so every function that parses/formats the PAY side amount for a custom token
+// must use this instead of parseEther/formatEther directly, or a non-18-decimal token
+// would silently compute amounts wrong by many orders of magnitude, not just look off.
+function payTokenDecimalsNow() {
+  return state.payToken === "CUSTOM" ? (state.customTokenDecimals ?? 18) : 18;
+}
+
+function payTokenAddress() {
+  return state.payToken === "CUSTOM" ? state.customTokenAddress : addr(state.payToken);
+}
+
+function paySymbolNow() {
+  return state.payToken === "CUSTOM" ? (state.customTokenSymbol || "token") : state.payToken;
+}
 
 function buildSwapPath(payKey, receiveKey) {
   if (payKey === "OTR") return [addr("OTR"), addr("TFR")]; // receiveKey is always TFR here
+  if (payKey === "CUSTOM") {
+    if (!state.customTokenValid || !state.customTokenPath) return null;
+    const hops = state.customTokenPath.slice();
+    if (receiveKey === "TFR") hops.push(addr("TFR"));
+    return hops;
+  }
   const hops = [routeAddr(payKey), addr("OTR")]; // PLS and WPLS both enter via the WPLS address
   if (receiveKey === "TFR") hops.push(addr("TFR"));
   return hops;
@@ -1833,16 +1911,32 @@ function buildSwapPath(payKey, receiveKey) {
 
 function isNativePay() { return state.payToken === "PLS"; }
 
-// True exactly for the combination the single 3-hop router call was unreliable for -
-// paying with native/wrapped PLS to receive TFR. See onTwoHopSwap().
+// True exactly for the combination the single 3-hop (or longer) router call was
+// unreliable for: paying with native/wrapped PLS, or a validated custom token, to
+// receive TFR. See onTwoHopSwap().
 function isTwoHopEligible() {
-  return (state.payToken === "PLS" || state.payToken === "WPLS") && state.receiveToken === "TFR";
+  const payEligible = state.payToken === "PLS" || state.payToken === "WPLS" ||
+    (state.payToken === "CUSTOM" && state.customTokenValid);
+  return payEligible && state.receiveToken === "TFR";
 }
 
 async function tokenBalance(key, account) {
   if (key === "PLS") return await state.provider.getBalance(account);
+  if (key === "CUSTOM") {
+    if (!state.customTokenValid) return 0n;
+    const c = new ethers.Contract(state.customTokenAddress, ERC20_ABI, state.provider);
+    return await c.balanceOf(account);
+  }
   const c = new ethers.Contract(addr(key), ERC20_ABI, state.provider);
   return await c.balanceOf(account);
+}
+
+function resetCustomTokenState() {
+  state.customTokenValid = false;
+  state.customTokenAddress = null;
+  state.customTokenSymbol = null;
+  state.customTokenDecimals = null;
+  state.customTokenPath = null;
 }
 
 function onPayTokenChange() {
@@ -1858,6 +1952,18 @@ function onPayTokenChange() {
   } else {
     receiveOtrOption.disabled = false;
   }
+
+  const customRow = document.getElementById("custom-token-row");
+  if (state.payToken === "CUSTOM") {
+    customRow.style.display = "block";
+  } else {
+    customRow.style.display = "none";
+    document.getElementById("custom-token-address").value = "";
+    document.getElementById("custom-token-status").textContent = "";
+    document.getElementById("custom-token-status").className = "custom-token-status";
+    resetCustomTokenState();
+  }
+
   document.getElementById("swap-amount-in").value = "";
   document.getElementById("swap-amount-out").value = "";
   refreshSwap();
@@ -1872,6 +1978,126 @@ function onReceiveTokenChange() {
   quoteSwap();
 }
 
+function onCustomTokenAddressInput() {
+  clearTimeout(customTokenDebounce);
+  const raw = document.getElementById("custom-token-address").value;
+  customTokenDebounce = setTimeout(() => validateCustomToken(raw), 500);
+}
+
+// Full validation pipeline for a pasted token address, in order, each with its own
+// specific failure message rather than one generic "invalid token" catch-all:
+//   1. well-formed address
+//   2. not OTR or TFR themselves (nonsensical here)
+//   3. a real contract actually exists at that address on the current network
+//   4. it responds to symbol()/decimals() the way a real ERC20 should
+//   5. PulseX actually has a working route from it to OTR (direct, or via WPLS)
+// A quote succeeding here proves a pool with liquidity exists. It does NOT prove the
+// token itself is safe to hold or trade (honeypot/blacklist tokens can quote fine and
+// still misbehave on a real transfer). Nothing below claims otherwise.
+async function validateCustomToken(rawAddress) {
+  const statusEl = document.getElementById("custom-token-status");
+  resetCustomTokenState();
+
+  const trimmed = (rawAddress || "").trim();
+  if (!trimmed) {
+    statusEl.textContent = "";
+    statusEl.className = "custom-token-status";
+    refreshSwap();
+    quoteSwap();
+    return;
+  }
+
+  const fail = (msg) => {
+    statusEl.textContent = msg;
+    statusEl.className = "custom-token-status error";
+    refreshSwap();
+    quoteSwap();
+  };
+
+  if (!ethers.isAddress(trimmed)) {
+    fail("Not a valid address.");
+    return;
+  }
+  const checksummed = ethers.getAddress(trimmed);
+
+  if (addr("OTR") && checksummed.toLowerCase() === addr("OTR").toLowerCase()) {
+    fail("That's already OTR. Pick it from the dropdown instead of pasting it here.");
+    return;
+  }
+  if (addr("TFR") && checksummed.toLowerCase() === addr("TFR").toLowerCase()) {
+    fail("That's TFR itself, the token this swap is trying to reach.");
+    return;
+  }
+
+  statusEl.textContent = "Checking…";
+  statusEl.className = "custom-token-status";
+
+  const provider = state.provider || new ethers.JsonRpcProvider(net().rpcUrls[0]);
+
+  let code;
+  try {
+    code = await provider.getCode(checksummed);
+  } catch (err) {
+    fail("Couldn't reach the network to check this address.");
+    return;
+  }
+  if (code === "0x") {
+    fail("No contract exists at this address on " + net().label + ".");
+    return;
+  }
+
+  let symbol, decimals;
+  try {
+    const c = new ethers.Contract(checksummed, ERC20_ABI, provider);
+    const results = await Promise.all([c.symbol(), c.decimals()]);
+    symbol = results[0];
+    decimals = Number(results[1]);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error("implausible decimals");
+  } catch (err) {
+    fail("This doesn't look like a standard ERC20 token (symbol()/decimals() failed).");
+    return;
+  }
+
+  statusEl.textContent = "Found " + symbol + " (" + decimals + " decimals). Checking for a route to OTR…";
+
+  if (!addr("ROUTER") || !addr("OTR") || !addr("WPLS")) {
+    fail("Router/OTR/WPLS addresses aren't configured on this network yet.");
+    return;
+  }
+
+  const routerC = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, provider);
+  const probeAmount = 10n ** BigInt(decimals); // one whole token, decimal-correct
+  let resolvedPath = null;
+  try {
+    await routerC.getAmountsOut(probeAmount, [checksummed, addr("OTR")]);
+    resolvedPath = [checksummed, addr("OTR")];
+  } catch (err) {
+    try {
+      await routerC.getAmountsOut(probeAmount, [checksummed, addr("WPLS"), addr("OTR")]);
+      resolvedPath = [checksummed, addr("WPLS"), addr("OTR")];
+    } catch (err2) {
+      resolvedPath = null;
+    }
+  }
+
+  if (!resolvedPath) {
+    fail("Found " + symbol + ", but no PulseX route to OTR exists yet (checked a direct pair and via WPLS).");
+    return;
+  }
+
+  state.customTokenAddress = checksummed;
+  state.customTokenSymbol = symbol;
+  state.customTokenDecimals = decimals;
+  state.customTokenPath = resolvedPath;
+  state.customTokenValid = true;
+
+  const via = resolvedPath.length === 2 ? "a direct OTR pair" : "WPLS";
+  statusEl.textContent = "Found " + symbol + " (" + decimals + " decimals). Route to OTR found via " + via + ".";
+  statusEl.className = "custom-token-status ok";
+  refreshSwap();
+  quoteSwap();
+}
+
 function setSlippage(pct, btn) {
   state.slippagePct = pct;
   document.querySelectorAll(".slippage-row button").forEach((b) => b.classList.remove("active"));
@@ -1880,16 +2106,17 @@ function setSlippage(pct, btn) {
 
 async function setSwapMax() {
   if (!state.address) return;
-  if (state.payToken !== "PLS" && !addr(state.payToken)) return;
+  if (state.payToken === "CUSTOM" ? !state.customTokenValid : (state.payToken !== "PLS" && !addr(state.payToken))) return;
   try {
     const bal = await tokenBalance(state.payToken, state.address);
+    const decimals = payTokenDecimalsNow();
     if (isNativePay()) {
       // Leave a small buffer for gas rather than draining the wallet to exactly 0.
       const GAS_BUFFER = ethers.parseEther("2");
       const spendable = bal > GAS_BUFFER ? bal - GAS_BUFFER : 0n;
-      document.getElementById("swap-amount-in").value = ethers.formatEther(spendable);
+      document.getElementById("swap-amount-in").value = ethers.formatUnits(spendable, decimals);
     } else {
-      document.getElementById("swap-amount-in").value = ethers.formatEther(bal);
+      document.getElementById("swap-amount-in").value = ethers.formatUnits(bal, decimals);
     }
     onSwapAmountInput();
   } catch (err) { console.error(err); }
@@ -1900,17 +2127,54 @@ function onSwapAmountInput() {
   swapDebounce = setTimeout(quoteSwap, 350);
 }
 
+const PRICE_IMPACT_WARN_PCT = 10; // shown in orange, trade still proceeds normally
+const PRICE_IMPACT_BLOCK_PCT = 30; // shown in red, requires an explicit second click to proceed
+
+// Compares the real trade's execution rate against a reference quote sized at a tiny
+// fraction of it, on the SAME path. A trade against a deep pool barely moves the rate
+// between the two sizes; a trade against a thin pool moves it a lot. That gap is price
+// impact. This holds regardless of how many hops the path has or what decimals the pay
+// token uses, since decimals cancel out in the out/in ratio and PulseX's per-hop swap fee
+// applies equally to both the real and reference trade, canceling out of the comparison too.
+async function computePriceImpactPct(router, path, amountIn) {
+  const REFERENCE_DIVISOR = 100000n; // reference trade = 0.001% of the real size
+  let referenceIn = amountIn / REFERENCE_DIVISOR;
+  if (referenceIn <= 0n) referenceIn = 1n;
+  if (referenceIn >= amountIn) return 0; // amountIn itself is already negligibly small
+
+  const [realAmounts, refAmounts] = await Promise.all([
+    router.getAmountsOut(amountIn, path),
+    router.getAmountsOut(referenceIn, path),
+  ]);
+  const realOut = realAmounts[realAmounts.length - 1];
+  const refOut = refAmounts[refAmounts.length - 1];
+  if (refOut <= 0n) return 100;
+
+  const realRate = Number(realOut) / Number(amountIn);
+  const refRate = Number(refOut) / Number(referenceIn);
+  if (refRate <= 0) return 100;
+
+  return Math.max(0, (1 - realRate / refRate) * 100);
+}
+
+function renderPriceImpact(impactEl, impactPct) {
+  impactEl.textContent = (impactPct < 0.01 ? "<0.01" : fmt(impactPct, 2)) + "%";
+  impactEl.className = impactPct >= PRICE_IMPACT_BLOCK_PCT ? "bad" : impactPct >= PRICE_IMPACT_WARN_PCT ? "warn" : "";
+}
+
 async function quoteSwap() {
   const outEl = document.getElementById("swap-amount-out");
   const rateEl = document.getElementById("swap-rate");
   const impactEl = document.getElementById("swap-impact");
   const usdOutEl = document.getElementById("swap-usd-out");
   const raw = document.getElementById("swap-amount-in").value.trim();
+  const payReady = state.payToken !== "CUSTOM" || state.customTokenValid;
 
-  if (!raw || Number(raw) <= 0 || !addr("ROUTER") || !addr("OTR") || !addr("TFR")) {
+  if (!raw || Number(raw) <= 0 || !addr("ROUTER") || !addr("OTR") || !addr("TFR") || !payReady) {
     outEl.value = "";
-    rateEl.textContent = "--";
+    rateEl.textContent = (state.payToken === "CUSTOM" && raw && Number(raw) > 0) ? "waiting for a valid token address" : "--";
     impactEl.textContent = "--";
+    impactEl.className = "";
     usdOutEl.textContent = "≈ $--.-- USD";
     return;
   }
@@ -1919,14 +2183,18 @@ async function quoteSwap() {
     const provider = state.provider || new ethers.JsonRpcProvider(net().rpcUrls[0]);
     const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, provider);
     const path = buildSwapPath(state.payToken, state.receiveToken);
-    const amountIn = ethers.parseEther(raw);
+    if (!path) throw new Error("No route available for this token.");
+    const amountIn = ethers.parseUnits(raw, payTokenDecimalsNow());
     const amounts = await router.getAmountsOut(amountIn, path);
     const amountOut = amounts[amounts.length - 1];
 
     outEl.value = ethers.formatEther(amountOut);
     const rate = Number(ethers.formatEther(amountOut)) / Number(raw);
-    rateEl.textContent = "1 " + state.payToken + " ≈ " + fmt(rate, 6) + " " + state.receiveToken;
-    impactEl.textContent = "depends on pool depth at execution";
+    rateEl.textContent = "1 " + paySymbolNow() + " ≈ " + fmt(rate, 6) + " " + state.receiveToken;
+
+    computePriceImpactPct(router, path, amountIn)
+      .then((impactPct) => renderPriceImpact(impactEl, impactPct))
+      .catch(() => { impactEl.textContent = "--"; impactEl.className = ""; });
 
     const receiveTokenKey = state.receiveToken === "WPLS" || state.receiveToken === "PLS" ? "WPLS" : state.receiveToken;
     const outUsd = await tokenUsdPrice(receiveTokenKey, provider);
@@ -1935,9 +2203,57 @@ async function quoteSwap() {
     outEl.value = "";
     rateEl.textContent = "no route / not enough liquidity";
     impactEl.textContent = "--";
+    impactEl.className = "";
     usdOutEl.textContent = "≈ $--.-- USD";
     console.error(err);
   }
+}
+
+// Shared gate used right before ANY swap actually executes (single-hop or two-hop alike):
+// recomputes price impact fresh rather than trusting the last debounced quoteSwap() render
+// (which can be stale), and past PRICE_IMPACT_BLOCK_PCT requires an explicit second click
+// on the same button before proceeding, the standard "Swap Anyway" confirmation pattern
+// used by major DEX frontends, instead of silently executing a trade against a near-empty
+// pool. Returns true when the swap should proceed, false when it was blocked or requires a
+// repeat click.
+async function gatePriceImpact(path, amountIn, rawAmountText) {
+  const btn = document.getElementById("swap-action-btn");
+  const provider = state.provider || new ethers.JsonRpcProvider(net().rpcUrls[0]);
+  const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, provider);
+
+  let impactPct;
+  try {
+    impactPct = await computePriceImpactPct(router, path, amountIn);
+  } catch (err) {
+    console.error(err);
+    toast("Couldn't check price impact", "Try again in a moment.", "error");
+    return false;
+  }
+
+  if (impactPct < PRICE_IMPACT_BLOCK_PCT) {
+    state.priceImpactAckSignature = null;
+    return true;
+  }
+
+  // The signature ties an acknowledgment to this exact pay token, receive token, and
+  // amount text. Changing any of them (a fresh edit, a different token) invalidates the
+  // earlier "yes I'm sure" and requires a new explicit confirmation.
+  const signature = state.payToken + ">" + state.receiveToken + ":" + rawAmountText;
+  if (state.priceImpactAckSignature === signature) {
+    state.priceImpactAckSignature = null;
+    return true;
+  }
+
+  state.priceImpactAckSignature = signature;
+  const impactLabel = fmt(impactPct, 1) + "%";
+  btn.disabled = false;
+  btn.textContent = "Price impact ~" + impactLabel + ", click to confirm";
+  toast(
+    "Extremely low liquidity",
+    "This trade would move the price by about " + impactLabel + ". Click swap again if you really want to proceed.",
+    "error"
+  );
+  return false;
 }
 
 async function refreshSwap() {
@@ -1945,25 +2261,31 @@ async function refreshSwap() {
   const twoHop = isTwoHopEligible();
   document.getElementById("twohop-note").style.display = twoHop ? "block" : "none";
 
+  const payReady = state.payToken !== "CUSTOM" || state.customTokenValid;
+  const paySymbol = paySymbolNow();
+
   if (!addr("ROUTER") || !addr("OTR") || !addr("TFR")) {
     btn.textContent = "Swap not available on this network yet";
     btn.disabled = true;
   } else if (!state.address) {
     btn.textContent = "Connect Wallet";
     btn.disabled = false;
+  } else if (!payReady) {
+    btn.textContent = "Enter a valid token address above";
+    btn.disabled = true;
   } else {
     btn.textContent = twoHop
-      ? "Swap " + state.payToken + " for " + state.receiveToken + " (2 transactions)"
-      : "Swap " + state.payToken + " for " + state.receiveToken;
+      ? "Swap " + paySymbol + " for " + state.receiveToken + " (2 transactions)"
+      : "Swap " + paySymbol + " for " + state.receiveToken;
     btn.disabled = false;
   }
 
   document.getElementById("swap-from-balance").textContent = "";
   document.getElementById("swap-to-balance").textContent = "";
-  if (state.address && (state.payToken === "PLS" || addr(state.payToken))) {
+  if (state.address && payReady && (state.payToken === "PLS" || payTokenAddress())) {
     try {
       const bal = await tokenBalance(state.payToken, state.address);
-      document.getElementById("swap-from-balance").textContent = "Balance: " + fmt(ethers.formatEther(bal), 2);
+      document.getElementById("swap-from-balance").textContent = "Balance: " + fmt(ethers.formatUnits(bal, payTokenDecimalsNow()), 2);
     } catch (e) {}
   }
   if (state.address && addr(state.receiveToken)) {
@@ -1979,11 +2301,25 @@ async function onSwapAction() {
   if (!guardConcurrentAction()) return;
   if (!(await ensureCorrectChain())) return;
 
+  if (state.payToken === "CUSTOM" && !state.customTokenValid) {
+    toast("Invalid token", "Paste a token address with a working route to OTR first.", "error");
+    return;
+  }
+
   const raw = document.getElementById("swap-amount-in").value.trim();
   if (!raw || Number(raw) <= 0) {
     toast("Enter an amount", "Type how much you want to swap first.", "error");
     return;
   }
+
+  const decimalsInForGate = payTokenDecimalsNow();
+  const amountInForGate = ethers.parseUnits(raw, decimalsInForGate);
+  const pathForGate = buildSwapPath(state.payToken, state.receiveToken);
+  if (!pathForGate) {
+    toast("No route", "No PulseX route is available for this token right now.", "error");
+    return;
+  }
+  if (!(await gatePriceImpact(pathForGate, amountInForGate, raw))) return;
 
   if (isTwoHopEligible()) return onTwoHopSwap(raw);
 
@@ -1991,20 +2327,22 @@ async function onSwapAction() {
   const payKey = state.payToken;
   const receiveKey = state.receiveToken;
   const native = isNativePay();
+  const paySymbol = paySymbolNow();
 
   state.actionInFlight = true;
   try {
     const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, state.signer);
-    const amountIn = ethers.parseEther(raw);
+    const amountIn = ethers.parseUnits(raw, payTokenDecimalsNow());
 
     if (!native) {
       setBusy(btn, true, "Checking allowance…");
-      const tokenIn = new ethers.Contract(addr(payKey), ERC20_ABI, state.signer);
-      await ensureAllowance(tokenIn, addr("ROUTER"), amountIn, payKey, btn);
+      const tokenIn = new ethers.Contract(payTokenAddress(), ERC20_ABI, state.signer);
+      await ensureAllowance(tokenIn, addr("ROUTER"), amountIn, paySymbol, btn);
     }
 
     setBusy(btn, true, "Quoting…");
     const path = buildSwapPath(payKey, receiveKey);
+    if (!path) throw new Error("No route available for this token.");
     const amounts = await router.getAmountsOut(amountIn, path);
     const expectedOut = amounts[amounts.length - 1];
     const minOut = (expectedOut * BigInt(Math.round((100 - state.slippagePct) * 100))) / 10000n;
@@ -2045,14 +2383,16 @@ async function onSwapAction() {
 async function onTwoHopSwap(raw) {
   const btn = document.getElementById("swap-action-btn");
   const payKey = state.payToken;
-  const native = payKey === "PLS";
+  const native = isNativePay();
+  const paySymbol = paySymbolNow();
 
   state.actionInFlight = true;
   try {
     const router = new ethers.Contract(addr("ROUTER"), ROUTER_ABI, state.signer);
     const otr = new ethers.Contract(addr("OTR"), ERC20_ABI, state.signer);
-    const amountIn = ethers.parseEther(raw);
-    const path1 = [routeAddr(payKey), addr("OTR")];
+    const amountIn = ethers.parseUnits(raw, payTokenDecimalsNow());
+    const path1 = payKey === "CUSTOM" ? state.customTokenPath : [routeAddr(payKey), addr("OTR")];
+    if (!path1) throw new Error("No route available for this token.");
     const path2 = [addr("OTR"), addr("TFR")];
 
     // ---- Approvals FIRST, both of them, before either swap transaction is sent ----
@@ -2064,9 +2404,9 @@ async function onTwoHopSwap(raw) {
     const estimatedOtrOut = (await router.getAmountsOut(amountIn, path1))[path1.length - 1];
 
     if (!native) {
-      setBusy(btn, true, "Checking " + payKey + " allowance…");
-      const tokenIn = new ethers.Contract(addr(payKey), ERC20_ABI, state.signer);
-      await ensureAllowance(tokenIn, addr("ROUTER"), amountIn, payKey, btn);
+      setBusy(btn, true, "Checking " + paySymbol + " allowance…");
+      const tokenIn = new ethers.Contract(payTokenAddress(), ERC20_ABI, state.signer);
+      await ensureAllowance(tokenIn, addr("ROUTER"), amountIn, paySymbol, btn);
     }
     setBusy(btn, true, "Checking OTR allowance…");
     await ensureAllowance(otr, addr("ROUTER"), estimatedOtrOut, "OTR", btn);
@@ -2083,7 +2423,7 @@ async function onTwoHopSwap(raw) {
     const tx1 = native
       ? await router.swapExactETHForTokensSupportingFeeOnTransferTokens(minOut1, path1, state.address, deadline1, { value: amountIn })
       : await router.swapExactTokensForTokensSupportingFeeOnTransferTokens(amountIn, minOut1, path1, state.address, deadline1);
-    toast("Transaction 1 of 2 submitted", "Swapping " + payKey + " for OTR…", null, explorerTx(tx1.hash));
+    toast("Transaction 1 of 2 submitted", "Swapping " + paySymbol + " for OTR…", null, explorerTx(tx1.hash));
     setBusy(btn, true, "Confirming 1/2…");
     await tx1.wait();
 
